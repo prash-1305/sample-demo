@@ -1,0 +1,159 @@
+!nvcc --version
+!pip install git+https://github.com/afnan47/cuda.git
+%load_ext nvcc_plugin
+
+
+%%cu
+#include <stdio.h>
+
+__global__ void vectorAddKernel(float* deviceInput1, float* deviceInput2, float* deviceOutput, int size) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < size) {
+        deviceOutput[tid] = deviceInput1[tid] + deviceInput2[tid];
+        printf("Thread %d: %.2f + %.2f = %.2f\n", tid, deviceInput1[tid], deviceInput2[tid], deviceOutput[tid]);
+    } else {
+        printf("Thread %d out of bounds\n", tid);
+    }
+}
+
+int main() {
+    int size = 6; // Size of the input vectors
+    float hostInput1[size] = {1, 2, 3,1,3,5};
+    float hostInput2[size] = {5, 6, 7,4,5,1};
+    float hostOutput[size];
+
+    float *deviceInput1, *deviceInput2, *deviceOutput;
+    cudaError_t cudaStatus;
+
+    cudaStatus = cudaMalloc(&deviceInput1, size * sizeof(float));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed for deviceInput1: %s\n", cudaGetErrorString(cudaStatus));
+        return 1;
+    }
+
+    cudaStatus = cudaMalloc(&deviceInput2, size * sizeof(float));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed for deviceInput2: %s\n", cudaGetErrorString(cudaStatus));
+        cudaFree(deviceInput1);
+        return 1;
+    }
+
+    cudaStatus = cudaMalloc(&deviceOutput, size * sizeof(float));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed for deviceOutput: %s\n", cudaGetErrorString(cudaStatus));
+        cudaFree(deviceInput1);
+        cudaFree(deviceInput2);
+        return 1;
+    }
+
+    cudaMemcpy(deviceInput1, hostInput1, size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceInput2, hostInput2, size * sizeof(float), cudaMemcpyHostToDevice);
+
+    int blockSize = 4; // 4 threads per block
+    int numBlocks = (size + blockSize - 1) / blockSize; // Adjust grid size to cover all elements
+
+    vectorAddKernel<<<numBlocks, blockSize>>>(deviceInput1, deviceInput2, deviceOutput, size);
+    cudaDeviceSynchronize(); // Wait for all threads to finish
+
+    cudaMemcpy(hostOutput, deviceOutput, size * sizeof(float), cudaMemcpyDeviceToHost);
+
+    printf("Vector Addition Result:\n");
+    for (int i = 0; i < size; i++) {
+        printf("%.2f + %.2f = %.2f\n", hostInput1[i], hostInput2[i], hostOutput[i]);
+    }
+
+    cudaFree(deviceInput1);
+    cudaFree(deviceInput2);
+    cudaFree(deviceOutput);
+
+    return 0;
+}
+
+
+
+%%writefile add.cu
+
+#include <iostream>
+#include <cstdlib> // Include <cstdlib> for rand()
+using namespace std;
+
+__global__ void add(int* A, int* B, int* C, int size) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < size) {
+        C[tid] = A[tid] + B[tid];
+        printf("Thread %d: %d + %d = %d\n", tid, A[tid], B[tid], C[tid]);
+    }
+}
+
+void print(int* vector, int size) {
+    for (int i = 0; i < size; i++) {
+        cout << vector[i] << " ";
+    }
+    cout << endl;
+}
+
+int main() {
+    int N;
+    cout << "Enter the size of the vectors: ";
+    cin >> N;
+
+    // Allocate host memory
+    int* A = new int[N];
+    int* B = new int[N];
+    int* C = new int[N];
+
+    // Initialize host arrays
+    cout << "Enter elements for vector A: ";
+    for (int i = 0; i < N; i++) {
+        cin >> A[i];
+    }
+
+    cout << "Enter elements for vector B: ";
+    for (int i = 0; i < N; i++) {
+        cin >> B[i];
+    }
+
+    cout << "Vector A: ";
+    print(A, N);
+    cout << "Vector B: ";
+    print(B, N);
+
+    int* X, * Y, * Z;
+    size_t vectorBytes = N * sizeof(int);
+
+    // Allocate device memory
+    cudaMalloc(&X, vectorBytes);
+    cudaMalloc(&Y, vectorBytes);
+    cudaMalloc(&Z, vectorBytes);
+
+    // Copy data from host to device
+    cudaMemcpy(X, A, vectorBytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(Y, B, vectorBytes, cudaMemcpyHostToDevice);
+
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
+
+    // Launch kernel
+    add<<<blocksPerGrid, threadsPerBlock>>>(X, Y, Z, N);
+
+    // Copy result from device to host
+    cudaMemcpy(C, Z, vectorBytes, cudaMemcpyDeviceToHost);
+
+    cout << "Addition: ";
+    print(C, N);
+
+    // Free device memory
+    cudaFree(X);
+    cudaFree(Y);
+    cudaFree(Z);
+
+    // Free host memory
+    delete[] A;
+    delete[] B;
+    delete[] C;
+
+    return 0;
+}
+
+!nvcc add.cu -o add
+!./add
